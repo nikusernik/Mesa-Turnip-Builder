@@ -1,3 +1,15 @@
+**Nov 12, 2026**: Updated Mesa to v26.3.0
+
+**Magisk, KernelSU, and APatch supported**
+
+**Requires Android 14 to install**
+
+1. Updated Mesa to v26.3.0 (first stable release of the 26.3 branch)
+2. Raised minimum meson to 1.5.0, as required by Mesa 26.3
+3. Verified build options against Mesa 26.3 (options file renamed to `meson.options`)
+
+---
+
 **Sep 19, 2026**: Updated Mesa to v26.2.3
 
 **Magisk, KernelSU, and APatch supported**

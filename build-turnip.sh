@@ -11,7 +11,7 @@ ndkver="https://dl.google.com/android/repository/${ndkdir}-linux.zip"
 sdkver="34"
 
 # Define Mesa version and download URL
-mesa_ver="26.2.3"
+mesa_ver="26.3.0"
 mesadir="mesa-mesa-${mesa_ver}"
 mesaver="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-${mesa_ver}/mesa-mesa-${mesa_ver}.zip?ref_type=tags"
 
@@ -38,8 +38,8 @@ for deps_chk in $deps; do
     if command -v "$deps_chk" >/dev/null 2>&1; then
         if [ "$deps_chk" = "meson" ]; then
             meson_ver=$(meson --version 2>/dev/null || echo "0")
-            if [ "$(printf '%s\n' "1.4.0" "$meson_ver" | sort -V | head -n1)" != "1.4.0" ]; then
-                echo -e "$red - meson found ($meson_ver), but >= 1.4.0 is required. Upgrade with: pip3 install --upgrade --break-system-packages meson $nocolor"
+            if [ "$(printf '%s\n' "1.5.0" "$meson_ver" | sort -V | head -n1)" != "1.5.0" ]; then
+                echo -e "$red - meson found ($meson_ver), but >= 1.5.0 is required. Upgrade with: pip3 install --upgrade --break-system-packages meson $nocolor"
                 deps_missing=1
             else
                 echo -e "$green - meson found ($meson_ver) $nocolor"
@@ -266,7 +266,7 @@ cat <<EOF >"module.prop"
 id=turnip-mesa
 name=Freedreno Turnip Vulkan Driver STABLE
 version=v${mesa_ver}
-versionCode=20260919
+versionCode=20261112
 author=V3KT0R-87
 description=Turnip is an open-source vulkan driver for devices with Adreno 6xx-8xx GPUs.
 updateJson=https://raw.githubusercontent.com/v3kt0r-87/Mesa-Turnip-Builder/refs/heads/stable/update.json
