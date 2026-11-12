@@ -1,0 +1,79 @@
+name: Repack Community Turnip Module
+
+on:
+  workflow_dispatch:
+    inputs:
+      driver_url:
+        description: 'Direct URL to the community driver zip (.adpkg/.zip)'
+        required: true
+        default: 'https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases/download/v39/Turnip_v27.0.0-R2.zip'
+      driver_lib:
+        description: 'Library file name inside the archive'
+        required: true
+        default: 'libvulkan_freedreno.so'
+      ver:
+        description: 'Version string used in the module/zip name'
+        required: true
+        default: '27.0.0-stevenmxz-r2'
+      vcode:
+        description: 'versionCode'
+        required: true
+        default: '2026111301'
+      author:
+        description: 'Original driver author'
+        required: true
+        default: 'StevenMXZ'
+      mesa_stream:
+        description: 'Mesa stream label for descriptions'
+        required: true
+        default: 'Mesa 27.0.0-devel'
+
+permissions:
+  contents: write
+
+jobs:
+  repack:
+    name: Repack Driver
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patchelf unzip curl zip
+
+      - name: Repack Driver as Magisk Module
+        env:
+          DRIVER_URL: ${{ inputs.driver_url }}
+          DRIVER_LIB: ${{ inputs.driver_lib }}
+          VER: ${{ inputs.ver }}
+          VCODE: ${{ inputs.vcode }}
+          DRIVER_AUTHOR: ${{ inputs.author }}
+          MESA_STREAM: ${{ inputs.mesa_stream }}
+        run: |
+          bash repack-turnip-module.sh
+
+      - name: Verify Module Contents
+        run: |
+          set -e
+          ZIP="turnip_workdir/Turnip-${{ inputs.ver }}-MAGISK-KSU.zip"
+          unzip -l "$ZIP"
+          unzip -p "$ZIP" module.prop
+          # The packaged driver must be a little-endian AArch64 shared object.
+          unzip -o -q "$ZIP" 'system/vendor/lib64/hw/vulkan.adreno.so' -d /tmp/verify
+          file /tmp/verify/system/vendor/lib64/hw/vulkan.adreno.so
+          readelf -h /tmp/verify/system/vendor/lib64/hw/vulkan.adreno.so | grep -E 'Class|Data|Machine'
+          readelf -d /tmp/verify/system/vendor/lib64/hw/vulkan.adreno.so | grep -E 'SONAME|NEEDED'
+
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Turnip-Repacked-${{ inputs.ver }}
+          path: |
+            turnip_workdir/Turnip-*.zip
+            turnip_workdir/vulkan.turnip.so
+          if-no-files-found: warn
