@@ -11,6 +11,9 @@ name: Auto-Repack StevenMXZ Turnip
 #   - assets named Turnip_v<version>.zip          -> mainline A7xx (used)
 #   - assets containing Gen8 / Oneui / Patched    -> skipped
 #   - any other release (e.g. proprietary vNNN)   -> skipped
+#
+# The Retroid Pocket G2 / Adreno A22 builds from Drakfix/rpg2-turnip are handled by
+# auto-repack-rpg2.yml.
 
 on:
   schedule:

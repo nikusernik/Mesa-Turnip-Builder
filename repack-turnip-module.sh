@@ -21,6 +21,8 @@ VER="${VER:-27.0.0-stevenmxz-r2}"
 VCODE="${VCODE:-2026111301}"
 DRIVER_AUTHOR="${DRIVER_AUTHOR:-StevenMXZ}"
 MESA_STREAM="${MESA_STREAM:-Mesa 27.0.0-devel}"
+# 1 = rewrite DT_SONAME with patchelf, 0 = keep the binary byte-identical.
+PATCH_SONAME="${PATCH_SONAME:-0}"
 
 green='\033[0;32m'
 red='\033[0;31m'
@@ -34,12 +36,19 @@ META_FILE="meta.json"
 ZIP_FILE_MAGISK="Turnip-${VER}-MAGISK-KSU.zip"
 ZIP_FILE_EMULATOR="Turnip-${VER}-EMULATOR.zip"
 
-for dep in patchelf unzip curl zip; do
+for dep in unzip curl zip; do
     command -v "$dep" >/dev/null 2>&1 || {
         echo -e "$red - $dep not found, cannot continue. $nocolor"
         exit 1
     }
 done
+
+if [ "$PATCH_SONAME" = "1" ]; then
+    command -v patchelf >/dev/null 2>&1 || {
+        echo -e "$red - patchelf not found (required when PATCH_SONAME=1). $nocolor"
+        exit 1
+    }
+fi
 
 rm -rf "$workdir"
 mkdir -p "$workdir"
@@ -68,11 +77,18 @@ fi
 cp "$DRIVER_LIB" vulkan.adreno.so
 cp "$DRIVER_LIB" "$DRIVER_FILE"
 
-# The Android loader resolves the HAL by full path, so DT_SONAME is not strictly
-# required, but keep it consistent with the installed file name exactly like the
-# in-tree build does.
-patchelf --set-soname vulkan.adreno.so vulkan.adreno.so
-patchelf --set-soname "$DRIVER_FILE" "$DRIVER_FILE"
+# The Android loader resolves the HAL by its full path, so DT_SONAME is not
+# required for the system slot. Rewriting it is also risky: patchelf inserts a
+# 64K-aligned PT_LOAD, and a driver packaged that way refused to start in
+# GameNative on the Retroid Pocket G2 (see Drakfix/rpg2-turnip package_driver.sh).
+# Keep the binary byte-identical to upstream and only patch when explicitly asked.
+if [ "${PATCH_SONAME:-0}" = "1" ]; then
+    echo "Setting DT_SONAME to match the installed file names..." $'\n'
+    patchelf --set-soname vulkan.adreno.so vulkan.adreno.so
+    patchelf --set-soname "$DRIVER_FILE" "$DRIVER_FILE"
+else
+    echo "Leaving DT_SONAME untouched (PATCH_SONAME=0)." $'\n'
+fi
 
 echo "Prepare magisk module structure..." $'\n'
 p1="system/vendor/lib64/hw"

@@ -1,0 +1,224 @@
+name: Auto-Repack RPG2 Turnip (Adreno A22)
+
+# Runs on a schedule, resolves the newest stable build published by Drakfix for the
+# Retroid Pocket G2 (Snapdragon G2 Gen 2 / Adreno A22), repacks it into a
+# Magisk/KernelSU module and publishes a release in this repository.
+#
+# Upstream: https://github.com/Drakfix/rpg2-turnip
+#
+# Selection rules (see the Resolve step):
+#   - tags containing rc/beta/alpha are skipped: only stable tags are packaged
+#   - within the newest stable release, the newest Mesa variant is preferred
+#     (mesa27dev over mesa26.3.0), matching the upstream recommendation
+#   - releases already published here are skipped unless forced
+
+on:
+  schedule:
+    # Daily at 06:20 UTC (09:20 Europe/Minsk), offset from the StevenMXZ job.
+    - cron: '20 6 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild even if a release for this version already exists'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-repack-rpg2
+  cancel-in-progress: false
+
+jobs:
+  repack:
+    name: Resolve and Repack
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Resolve Latest Upstream Build
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+
+          if ! curl -fsSL \
+              -H 'Accept: application/vnd.github+json' \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'User-Agent: auto-repack' \
+              'https://api.github.com/repos/Drakfix/rpg2-turnip/releases?per_page=30' \
+              -o releases.json; then
+            echo '::warning::Could not fetch upstream releases; nothing to do.'
+            exit 0
+          fi
+
+          # Newest release whose tag is not a pre-release, then its newest asset.
+          selection="$(jq -r '
+            [ .[] | select(.tag_name | test("rc|beta|alpha"; "i") | not) ]
+            | sort_by(.published_at // .created_at)
+            | last
+            | select(. != null)
+            | "\(.tag_name)\t\(
+                ([ .assets[]
+                   | select(.name | test("\\.zip$"; "i"))
+                 ] | sort_by(.name) | last | .name)
+              )\t\(
+                ([ .assets[]
+                   | select(.name | test("\\.zip$"; "i"))
+                 ] | sort_by(.name) | last | .browser_download_url)
+              )\t\(.published_at // .created_at)"
+          ' releases.json)"
+
+          if [ -z "$selection" ] || [ "$selection" = "null" ]; then
+            echo '::warning::No stable Turnip asset found upstream.'
+            exit 0
+          fi
+
+          tag="$(printf '%s' "$selection" | cut -f1)"
+          asset="$(printf '%s' "$selection" | cut -f2)"
+          url="$(printf '%s' "$selection" | cut -f3)"
+          published="$(printf '%s' "$selection" | cut -f4)"
+
+          # A22 build tag for this repository, e.g. a22-tuned-v5rc2.
+          # Upstream tags look like "v5-rc2" or "v4"; normalise to lower kebab.
+          version="$(printf '%s' "$tag" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+          out_tag="a22-tuned-${version}"
+          vcode="$(date -u -d "$published" +%Y%m%d)"
+
+          echo "asset=$asset"     >> "$GITHUB_OUTPUT"
+          echo "url=$url"         >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$out_tag"     >> "$GITHUB_OUTPUT"
+          echo "vcode=$vcode"     >> "$GITHUB_OUTPUT"
+
+          echo "Resolved: $asset (tag $tag, published $published)"
+          echo "Output tag: $out_tag, code $vcode"
+
+          force='false'
+          if [ "${{ github.event_name }}" = 'workflow_dispatch' ] && \
+             [ "${{ inputs.force }}" = 'true' ]; then
+            force='true'
+          fi
+
+          code="$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'User-Agent: auto-repack' \
+            "https://api.github.com/repos/$REPO/releases/tags/$out_tag")"
+
+          if [ "$code" = '200' ] && [ "$force" != 'true' ]; then
+            echo "Release $out_tag already exists; skipping."
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Install Tools
+        if: steps.resolve.outputs.skip != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip curl zip
+
+      - name: Repack Driver as Magisk Module
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          DRIVER_URL: ${{ steps.resolve.outputs.url }}
+          DRIVER_LIB: libvulkan_freedreno.so
+          VER: ${{ steps.resolve.outputs.version }}
+          VCODE: ${{ steps.resolve.outputs.vcode }}
+          DRIVER_AUTHOR: Drakfix (RPG2-Turnip)
+          MESA_STREAM: Turnip (A22 tuned)
+          # rpg2-turnip packages without patchelf on purpose: rewriting DT_SONAME
+          # broke GameNative on this device. Keep the binary byte-identical.
+          PATCH_SONAME: '0'
+        run: |
+          bash repack-turnip-module.sh
+
+      - name: Verify Module Contents
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          VER: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          ZIP="turnip_workdir/Turnip-${VER}-MAGISK-KSU.zip"
+          test -f "$ZIP"
+          unzip -l "$ZIP"
+          unzip -p "$ZIP" module.prop
+
+          unzip -o -q "$ZIP" 'system/vendor/lib64/hw/vulkan.adreno.so' -d /tmp/verify
+          SO=/tmp/verify/system/vendor/lib64/hw/vulkan.adreno.so
+          file "$SO"
+          readelf -h "$SO" | grep -E 'Class|Data|Machine'
+          readelf -d "$SO" | grep -E 'SONAME|NEEDED' || true
+
+          # Payload must match the upstream binary byte for byte.
+          unzip -o -q turnip_workdir/driver.zip 'libvulkan_freedreno.so' -d /tmp/orig
+          if ! cmp -s /tmp/orig/libvulkan_freedreno.so "$SO"; then
+            echo "::error::Packaged driver differs from the upstream binary."
+            exit 1
+          fi
+          echo "Driver is byte-identical to upstream."
+
+          size="$(stat -c %s "$SO")"
+          if [ "$size" -lt 1000000 ]; then
+            echo "::error::Packaged driver is suspiciously small ($size bytes)."
+            exit 1
+          fi
+
+      - name: Publish Release
+        if: steps.resolve.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.resolve.outputs.tag }}
+          name: Turnip A22 ${{ steps.resolve.outputs.version }} (RPG2-Turnip)
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            Repacked from the upstream **Retroid Pocket G2 / Adreno A22** build by
+            [Drakfix/rpg2-turnip](https://github.com/Drakfix/rpg2-turnip).
+
+            - Upstream asset: `${{ steps.resolve.outputs.asset }}`
+            - Magisk / KernelSU / APatch module, replaces
+              `system/vendor/lib64/hw/vulkan.adreno.so`
+            - Version code: `${{ steps.resolve.outputs.vcode }}`
+            - Repacked **as-is**: no patchelf, no extra patches, binary identical
+              to upstream.
+
+            Reboot after installing the module.
+          files: |
+            turnip_workdir/Turnip-${{ steps.resolve.outputs.version }}-MAGISK-KSU.zip
+            turnip_workdir/Turnip-${{ steps.resolve.outputs.version }}-EMULATOR.zip
+            turnip_workdir/vulkan.turnip.so
+
+      - name: Upload Artifacts
+        if: always() && steps.resolve.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Turnip-AutoRepackA22-${{ steps.resolve.outputs.version }}
+          path: |
+            turnip_workdir/Turnip-*.zip
+            turnip_workdir/vulkan.turnip.so
+          if-no-files-found: warn
+
+      - name: Summary
+        if: always()
+        env:
+          SKIP: ${{ steps.resolve.outputs.skip }}
+          VER: ${{ steps.resolve.outputs.version }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          {
+            echo "### RPG2 (A22) auto-repack result"
+            echo
+            if [ "$SKIP" = 'true' ]; then
+              echo "Nothing to do: no newer stable upstream build, or it was already released."
+            else
+              echo "- Version: \`$VER\`"
+              echo "- Tag: \`$TAG\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
