@@ -24,6 +24,13 @@ MESA_STREAM="${MESA_STREAM:-Mesa 27.0.0-devel}"
 # 1 = rewrite DT_SONAME with patchelf, 0 = keep the binary byte-identical.
 PATCH_SONAME="${PATCH_SONAME:-0}"
 
+# The "v" prefix is added only when the version does not already carry one, so
+# "26.3.0" becomes "v26.3.0" while an upstream tag like "v4" stays "v4".
+case "$VER" in
+    v*) MODULE_VERSION="$VER" ;;
+    *)  MODULE_VERSION="v$VER" ;;
+esac
+
 green='\033[0;32m'
 red='\033[0;31m'
 nocolor='\033[0m'
@@ -157,7 +164,7 @@ EOF
 cat <<EOF >"module.prop"
 id=turnip-mesa
 name=Freedreno Turnip Vulkan Driver COMMUNITY
-version=v${VER}
+version=${MODULE_VERSION}
 versionCode=${VCODE}
 author=${DRIVER_AUTHOR} (repacked by V3KT0R-87 tooling)
 description=Turnip built from ${MESA_STREAM} by ${DRIVER_AUTHOR}, repacked as a system module.
